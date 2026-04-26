@@ -1,0 +1,70 @@
+name: Daily Streak
+
+on:
+  schedule:
+    # 04:17 UTC daily = 09:47 IST. Early enough that a 0-60min jitter never crosses midnight UTC.
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+    inputs:
+      note:
+        description: "Optional short note to log (e.g. 'worked on auth refactor')"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-streak
+  cancel-in-progress: false
+
+jobs:
+  log:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      STREAK_TZ: Asia/Kolkata
+      STREAK_NOTE: ${{ github.event.inputs.note }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Randomize commit time (0-60 min jitter)
+        if: github.event_name == 'schedule'
+        shell: bash
+        run: sleep $(( RANDOM % 3600 ))
+
+      - name: Update daily log
+        id: update
+        shell: bash
+        run: |
+          set +e
+          python scripts/update_log.py
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          # 0 = wrote new entry, 78 = already logged today (no-op), other = real error
+          if [ "$rc" -ne 0 ] && [ "$rc" -ne 78 ]; then exit "$rc"; fi
+
+      - name: Commit and push
+        if: steps.update.outputs.rc == '0'
+        shell: bash
+        run: |
+          # Use account-owned noreply email so commits count toward the contribution graph.
+          git config user.name  "Nayum Khan"
+          git config user.email "265524109+nayumk007-alt@users.noreply.github.com"
+          git add daily_log.md
+          if git diff --cached --quiet; then
+            echo "No staged changes - nothing to commit."
+            exit 0
+          fi
+          DATE_STR="$(TZ="${STREAK_TZ}" date +%Y-%m-%d)"
+          git commit -m "chore(streak): log entry for ${DATE_STR}"
+          git push
