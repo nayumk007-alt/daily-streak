@@ -56,6 +56,8 @@ jobs:
       - name: Commit and push
         if: steps.update.outputs.rc == '0'
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           # Use account-owned noreply email so commits count toward the contribution graph.
           git config user.name  "Nayum Khan"
@@ -67,4 +69,26 @@ jobs:
           fi
           DATE_STR="$(TZ="${STREAK_TZ}" date +%Y-%m-%d)"
           git commit -m "chore(streak): log entry for ${DATE_STR}"
-          git push
+
+          # Authenticate the push explicitly with the job token. This removes the
+          # dependence on the credential persisted by actions/checkout, which can
+          # intermittently fail with "could not read Username for 'https://github.com'".
+          # github.token is auto-masked in logs, so it never appears in plaintext.
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          # Push with bounded retry (5 attempts, linear backoff) to survive
+          # transient auth/network blips. Rebase between tries in case main moved.
+          attempt=1
+          max=5
+          until git push; do
+            if [ "$attempt" -ge "$max" ]; then
+              echo "Push failed after ${attempt} attempts; failing the job so it is reported."
+              exit 1
+            fi
+            wait=$(( attempt * 15 ))
+            echo "Push failed (attempt ${attempt}/${max}); re-syncing and retrying in ${wait}s..."
+            git pull --rebase origin main || true
+            sleep "$wait"
+            attempt=$(( attempt + 1 ))
+          done
+          echo "Push succeeded on attempt ${attempt}."
