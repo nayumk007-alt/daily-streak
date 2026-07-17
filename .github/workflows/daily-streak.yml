@@ -25,6 +25,10 @@ jobs:
     env:
       STREAK_TZ: Asia/Kolkata
       STREAK_NOTE: ${{ github.event.inputs.note }}
+      # Number of commits to make per day. GitHub shades a contribution square by
+      # that day's commit count (relative to your busiest days), so a consistent
+      # higher number keeps every square in the darkest bucket.
+      COMMITS_PER_DAY: "20"
 
     steps:
       - name: Checkout
@@ -68,7 +72,22 @@ jobs:
             exit 0
           fi
           DATE_STR="$(TZ="${STREAK_TZ}" date +%Y-%m-%d)"
+
+          # Commit #1: the human-readable daily entry written by the script above.
           git commit -m "chore(streak): log entry for ${DATE_STR}"
+
+          # Deepen the contribution square: make COMMITS_PER_DAY total commits today.
+          # GitHub shades a day by its commit count, so each extra checkpoint commit
+          # (all authored by the account noreply email) pushes the square darker.
+          total="${COMMITS_PER_DAY:-1}"
+          i=2
+          while [ "$i" -le "$total" ]; do
+            printf -- '- checkpoint %02d/%02d at %s\n' "$i" "$total" "$(TZ="${STREAK_TZ}" date +%H:%M:%S)" >> daily_log.md
+            git add daily_log.md
+            git commit -q -m "chore(streak): ${DATE_STR} checkpoint ${i}/${total}"
+            i=$(( i + 1 ))
+          done
+          echo "Created ${total} commit(s) for ${DATE_STR}."
 
           # Authenticate the push explicitly with the job token. This removes the
           # dependence on the credential persisted by actions/checkout, which can
